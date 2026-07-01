@@ -125,7 +125,7 @@ def download_url(args: dict[str, Any], ctx: ToolContext) -> str:
         return f"[DOWNLOAD URL ERROR] Unsupported URL scheme for '{url}'."
     if ctx.on_status:
         ctx.on_status(f"Downloading: {url}")
-    target = resolve_in_workspace(ctx.workspace_dir, rel)
+    target = resolve_in_workspace(ctx.workspace_dir, rel, ctx.extra_roots)
     max_bytes = 50 * 1024 * 1024
     req = urllib.request.Request(url, headers={"User-Agent": "Geocentric-Agent/1.0"})
     with urllib.request.urlopen(req, timeout=20) as response:

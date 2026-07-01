@@ -10,6 +10,7 @@ is exactly the startup-latency cost the in-process CLI core exists to avoid.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterable
 
 
 def path_is_inside(path: Path, root: Path) -> bool:
@@ -20,12 +21,18 @@ def path_is_inside(path: Path, root: Path) -> bool:
         return False
 
 
-def resolve_in_workspace(workspace_dir: Path, rel_path: str) -> Path:
+def resolve_in_workspace(workspace_dir: Path, rel_path: str, extra_roots: Iterable[Path] = ()) -> Path:
+    """Resolve `rel_path` against `workspace_dir`, allowing escape only into one
+    of `extra_roots` (populated by /add-dir). Single-workspace callers that
+    never pass extra_roots keep today's exact sandboxing behavior."""
     rel = (rel_path or ".").strip().strip('"') or "."
     target = (workspace_dir / rel).resolve()
-    if not path_is_inside(target, workspace_dir):
-        raise ValueError(f"Sandbox escape attempt detected: {rel}")
-    return target
+    if path_is_inside(target, workspace_dir):
+        return target
+    for root in extra_roots:
+        if path_is_inside(target, root):
+            return target
+    raise ValueError(f"Sandbox escape attempt detected: {rel}")
 
 
 def safe_text_snapshot(path: Path, max_bytes: int = 500_000) -> str:

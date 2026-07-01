@@ -26,7 +26,7 @@ def _status(ctx: ToolContext, message: str) -> None:
 def read_file(args: dict[str, Any], ctx: ToolContext) -> str:
     rel = str(args.get("path", "")).strip()
     _status(ctx, f"Reading file: {rel}")
-    target = resolve_in_workspace(ctx.workspace_dir, rel)
+    target = resolve_in_workspace(ctx.workspace_dir, rel, ctx.extra_roots)
     if not target.exists() or not target.is_file():
         return f"[READ FILE ERROR] File '{rel}' does not exist or is a directory."
     content = target.read_text(encoding="utf-8", errors="ignore")
@@ -37,7 +37,7 @@ def write_file(args: dict[str, Any], ctx: ToolContext) -> str:
     rel = str(args.get("path", "")).strip()
     content = args.get("content", "")
     _status(ctx, f"Writing file: {rel}")
-    target = resolve_in_workspace(ctx.workspace_dir, rel)
+    target = resolve_in_workspace(ctx.workspace_dir, rel, ctx.extra_roots)
     old_text = safe_text_snapshot(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
@@ -54,7 +54,7 @@ def edit_file(args: dict[str, Any], ctx: ToolContext) -> str:
     end = int(args.get("end_line", start))
     content = args.get("content", "")
     _status(ctx, f"Editing file: {rel}")
-    target = resolve_in_workspace(ctx.workspace_dir, rel)
+    target = resolve_in_workspace(ctx.workspace_dir, rel, ctx.extra_roots)
     if not target.exists() or not target.is_file():
         return f"[EDIT FILE ERROR] File '{rel}' does not exist."
     old_text = target.read_text(encoding="utf-8", errors="ignore")
@@ -69,7 +69,7 @@ def edit_file(args: dict[str, Any], ctx: ToolContext) -> str:
 def delete_file(args: dict[str, Any], ctx: ToolContext) -> str:
     rel = str(args.get("path", "")).strip()
     _status(ctx, f"Deleting file: {rel}")
-    target = resolve_in_workspace(ctx.workspace_dir, rel)
+    target = resolve_in_workspace(ctx.workspace_dir, rel, ctx.extra_roots)
     if not target.exists():
         return f"[DELETE FILE ERROR] Path '{rel}' does not exist."
     if target.is_dir():
@@ -83,8 +83,8 @@ def move_file(args: dict[str, Any], ctx: ToolContext) -> str:
     src = str(args.get("source", "")).strip()
     dst = str(args.get("destination", "")).strip()
     _status(ctx, f"Moving {src} to {dst}")
-    source = resolve_in_workspace(ctx.workspace_dir, src)
-    target = resolve_in_workspace(ctx.workspace_dir, dst)
+    source = resolve_in_workspace(ctx.workspace_dir, src, ctx.extra_roots)
+    target = resolve_in_workspace(ctx.workspace_dir, dst, ctx.extra_roots)
     if not source.exists():
         return f"[MOVE FILE ERROR] Source path does not exist: {src}"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -96,8 +96,8 @@ def copy_file(args: dict[str, Any], ctx: ToolContext) -> str:
     src = str(args.get("source", "")).strip()
     dst = str(args.get("destination", "")).strip()
     _status(ctx, f"Copying {src} to {dst}")
-    source = resolve_in_workspace(ctx.workspace_dir, src)
-    target = resolve_in_workspace(ctx.workspace_dir, dst)
+    source = resolve_in_workspace(ctx.workspace_dir, src, ctx.extra_roots)
+    target = resolve_in_workspace(ctx.workspace_dir, dst, ctx.extra_roots)
     if not source.exists() or not source.is_file():
         return f"[COPY FILE ERROR] Source file does not exist: {src}"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +108,7 @@ def copy_file(args: dict[str, Any], ctx: ToolContext) -> str:
 def make_directory(args: dict[str, Any], ctx: ToolContext) -> str:
     rel = str(args.get("path", "")).strip()
     _status(ctx, f"Creating directory: {rel}")
-    target = resolve_in_workspace(ctx.workspace_dir, rel)
+    target = resolve_in_workspace(ctx.workspace_dir, rel, ctx.extra_roots)
     target.mkdir(parents=True, exist_ok=True)
     return f"[MAKE DIRECTORY SUCCESS] Created directory '{rel}'."
 
@@ -117,7 +117,7 @@ def list_directory(args: dict[str, Any], ctx: ToolContext) -> str:
     rel = str(args.get("path", ".")).strip() or "."
     max_entries = int(args.get("max_entries", 120))
     _status(ctx, f"Listing directory: {rel}")
-    target = resolve_in_workspace(ctx.workspace_dir, rel)
+    target = resolve_in_workspace(ctx.workspace_dir, rel, ctx.extra_roots)
     if not target.exists():
         return f"[LIST DIRECTORY ERROR] Path does not exist: {rel}"
     if not target.is_dir():
@@ -136,7 +136,7 @@ def list_directory(args: dict[str, Any], ctx: ToolContext) -> str:
 def stat_path(args: dict[str, Any], ctx: ToolContext) -> str:
     rel = str(args.get("path", "")).strip()
     _status(ctx, f"Inspecting path metadata: {rel}")
-    target = resolve_in_workspace(ctx.workspace_dir, rel)
+    target = resolve_in_workspace(ctx.workspace_dir, rel, ctx.extra_roots)
     if not target.exists():
         return f"[STAT PATH ERROR] Path does not exist: {rel}"
     st = target.stat()

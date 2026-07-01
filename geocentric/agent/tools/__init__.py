@@ -27,6 +27,10 @@ class ToolContext:
 
     workspace_dir: Path
     on_status: Optional[Callable[[str], None]] = None
+    # Additional directories granted via /add-dir. Filesystem tools may
+    # resolve paths into these roots in addition to workspace_dir; empty by
+    # default so single-workspace callers get today's exact sandboxing.
+    extra_roots: tuple[Path, ...] = ()
 
 
 ToolHandler = Callable[[dict[str, Any], ToolContext], str]
@@ -94,15 +98,16 @@ class ToolRegistry:
 
 
 def default_registry() -> ToolRegistry:
-    """Registry for the CLI coding-agent surface (fs/search/shell/git/web)."""
+    """Registry for the CLI coding-agent surface (fs/search/shell/git/web/indexing)."""
     from . import fs as fs_tools
     from . import git as git_tools
+    from . import indexing as indexing_tools
     from . import search as search_tools
     from . import shell as shell_tools
     from . import web as web_tools
 
     registry = ToolRegistry()
-    for module in (fs_tools, search_tools, shell_tools, git_tools, web_tools):
+    for module in (fs_tools, search_tools, shell_tools, git_tools, web_tools, indexing_tools):
         for spec in module.SPECS:
             registry.register(spec)
     return registry
