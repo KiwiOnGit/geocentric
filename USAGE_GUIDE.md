@@ -1,6 +1,65 @@
-  # Geocentric 2.1 - Complete Usage Guide
+# Geocentric 2.5 - Complete Usage Guide
 
-This guide contains clean, copy-paste-ready commands to run Geocentric 2.1 locally on a single machine or collaboratively across multiple devices (macOS and Linux).
+Geocentric 2.5 is a comprehensive local AI platform for building, training, serving, and using language models on your own machine. It is designed for users who want full control over model behavior, data, training pipeline, runtime environment, and tool use without depending on a remote cloud service. This guide is a practical handbook for installing the project, launching the interface, training models, running the agent, and extending the platform with your own workflows.
+
+This document walks through the full lifecycle of Geocentric from setup to deployment:
+
+- installing Python dependencies and creating a local environment
+- training a tokenizer from your own corpora
+- pretraining a decoder-only Transformer from scratch
+- fine-tuning the model for instruction-following and chat behavior
+- serving the model locally through the web UI or CLI
+- using the interactive agent terminal and desktop app for coding and workspace tasks
+- connecting remotely to another machine over the local network
+- enabling collaborative multi-device training across macOS and Linux hosts
+
+The platform is intentionally flexible. Some users will use it as a research sandbox to study language model training, while others will use it as a personal local AI workstation with coding, file editing, web-aware search, and project automation features. Geocentric is designed to support both styles of use.
+
+## What You Can Do With Geocentric
+
+### Build Models Locally
+You can create tokenizer vocabularies from your own data, train models from scratch, and fine-tune them for chat or instruction tasks without sending prompts or training data to external providers.
+
+### Run a Local AI Assistant
+You can interact with the model through a terminal-based CLI, a local web interface, or a desktop app. The assistant can respond conversationally and can optionally use tools for file operations, command execution, and web search.
+
+### Work on Projects in a Local Workspace
+When the agent mode is enabled, Geocentric can operate inside a project workspace. It can inspect files, create or edit files, run commands, and keep changes organized so you can review them before accepting them.
+
+### Train at Larger Scale
+Geocentric supports multi-machine collaborative training using a custom networking bridge. This is useful when you want to scale beyond the limits of a single system or compare distributed training behavior across machines.
+
+### Customize the Experience
+You can adjust models, prompts, tools, system prompts, data paths, model presets, optimization flags, hardware profiles, and various other settings to tailor the experience to your hardware and goals.
+
+## Platform Components
+
+### CLI
+The CLI provides commands for training, serving, interacting, and managing the workflow. It is the main entry point for developers using the repository directly.
+
+### Server and Web UI
+The local server exposes a web interface and an OpenAI-compatible API surface, so you can use your local model through a browser or other compatible clients.
+
+### Interactive Agent
+The terminal-based agent gives you a Claude-style conversational experience with slash commands, tool use, and project awareness.
+
+### Desktop App
+The macOS desktop app packages the local service and agent experience into a native application for easier day-to-day use.
+
+### Remote Clients
+Geocentric can also connect to a remote host so you can run the client from another machine and interact with a model hosted elsewhere on your LAN.
+
+## Typical Workflow
+
+1. Install dependencies and create a virtual environment.
+2. Train or prepare a tokenizer.
+3. Pretrain a model.
+4. Fine-tune the model for chat/instructions.
+5. Run the local server or interactive CLI.
+6. Use the agent tools to inspect or edit files, launch commands, or browse the web.
+7. If desired, connect another machine over the network and use the remote client.
+
+## Installation & Setup
 
 ---
 
