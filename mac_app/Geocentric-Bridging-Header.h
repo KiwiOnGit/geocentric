@@ -1,0 +1,6 @@
+#ifndef GEOCENTRIC_BRIDGING_HEADER_H
+#define GEOCENTRIC_BRIDGING_HEADER_H
+
+#include "FastIntentClassifier.h"
+
+#endif /* GEOCENTRIC_BRIDGING_HEADER_H */
