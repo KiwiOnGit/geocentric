@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import html
 import re
 import shutil
@@ -37,9 +38,28 @@ class C:
     BG_PANEL = "\033[48;5;236m"
 
 
+def _enable_ansi_on_windows() -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        mode = ctypes.c_ulong()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        mode.value |= 0x0004
+        return bool(kernel32.SetConsoleMode(handle, mode))
+    except Exception:
+        return False
+
+_ANSI_SUPPORTED = _enable_ansi_on_windows() if sys.platform == "win32" else True
+
+
 def supports_color() -> bool:
     if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
         return False
+    if sys.platform == "win32":
+        return _ANSI_SUPPORTED
     return True
 
 
@@ -192,6 +212,9 @@ def strip_internal_tags(text: str) -> str:
     clean = re.sub(r"<status>[\s\S]*?</status>", "", clean, flags=re.IGNORECASE)
     clean = re.sub(r"<chat_title\b[^>]*>[\s\S]*?</chat_title>", "", clean, flags=re.IGNORECASE)
     clean = re.sub(r"<usage_notice\b[^>]*/>", "", clean, flags=re.IGNORECASE)
+    # Fallback-provider tool-call blocks (geocentric/agent/fallback_parser.py's
+    # JSON-fenced format) shouldn't leak into the rendered assistant text.
+    clean = re.sub(r"```tool_call\s*\n[\s\S]*?```", "", clean, flags=re.IGNORECASE)
     tag_patterns = [
         r"<write_file\b[\s\S]*?</write_file>",
         r"<edit_file\b[\s\S]*?</edit_file>",
@@ -217,6 +240,11 @@ def latest_status(text: str) -> str:
         return matches[-1].strip()
     partial = re.search(r"<status>([^<]*)$", text or "", flags=re.IGNORECASE)
     return partial.group(1).strip() if partial else ""
+
+
+def extract_returnturn(text: str) -> str:
+    match = re.search(r"<returnturn>([\s\S]*?)</returnturn>", text or "", flags=re.IGNORECASE)
+    return match.group(1).strip() if match else ""
 
 
 def render_markdown(text: str) -> str:

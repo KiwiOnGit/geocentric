@@ -98,13 +98,10 @@ stop_server_background() {
 
 case "$LAUNCH_MODE" in
     2|cli|CLI)
-        start_server_background
-        trap stop_server_background EXIT INT TERM
-        LAN_IP="$(get_lan_ip)"
         echo "========================================================================="
-        echo "  Geocentric Code CLI"
+        echo "  Geocentric Code CLI (local, in-process — no server needed)"
         echo "========================================================================="
-        $PY -W ignore::Warning -m geocentric.cli interactive --server "http://127.0.0.1:${PORT}"
+        $PY -W ignore::Warning -m geocentric.cli interactive
         ;;
     3|connect|Connect)
         read -r -p "Remote server URL (e.g. http://192.168.1.30:${PORT}): " REMOTE_SERVER

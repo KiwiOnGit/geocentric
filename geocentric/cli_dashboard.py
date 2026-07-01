@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import random
 import sys
 from dataclasses import dataclass, field
 from typing import Literal
@@ -19,6 +20,263 @@ except Exception:  # pragma: no cover - prompt_toolkit optional
 LineKind = Literal["user", "assistant", "tool", "status", "thinking", "error", "plan"]
 
 _EFFORT_LABELS = {"low": "low", "medium": "medium", "high": "high", "max": "xhigh"}
+
+WELCOME_PHRASES = [
+    "Welcome back, code voyager!",
+    "Hello again, cosmic coder!",
+    "Your workspace awaits, brave builder!",
+    "New day, new logic adventure!",
+    "Ready for another round of cleverness?",
+    "Greetings, digital architect!",
+    "The machine learning ship has docked.",
+    "Another session of joyful debugging begins!",
+    "Your local AI awaits with fresh ideas.",
+    "Time to sculpt code into something brilliant.",
+    "The project universe is open for exploration.",
+    "Back in the cockpit, captain of code!",
+    "The CLI stars are aligned for creation.",
+    "Your keyboard is charged and ready.",
+    "A fresh run of Geocentric logic is here.",
+    "Hello, future feature factory!",
+    "The terminal is humming with possibility.",
+    "Let's turn weird ideas into working code.",
+    "The local AI is awake and eager.",
+    "Welcome to another round of innovation.",
+    "The environment is warmed up for coding.",
+    "You and Geocentric Code are back together.",
+    "A new session for polished progress.",
+    "Your workspace is ready for digital magic.",
+    "Let's make the next change unforgettable.",
+    "Hello again, architect of automation!",
+    "The code canvas is primed and waiting.",
+    "Ready to compose another software symphony.",
+    "A new era of local AI work begins now.",
+    "Your workspace just got a fresh burst of energy.",
+    "Today is a perfect day to write elegant code.",
+    "Let's keep building better developer experiences.",
+    "Your Geocentric session is fully charged.",
+    "The terminal is bright with new ideas.",
+    "The digital workshop is open for business.",
+    "Return to expertly guided code creation.",
+    "Welcome back, steady coder of the future.",
+    "A new thinking journey begins in your terminal.",
+    "The local agent is ready to invent with you.",
+    "Your project space is standing by.",
+    "The command line is humming gently.",
+    "Welcome to another productive coding burst.",
+    "Your project session is alive and eager.",
+    "Let's improve the system one smart step at a time.",
+    "A new iteration of Geocentric thinking starts now.",
+    "Let’s create something unexpectedly delightful.",
+    "The local AI workspace is awake and writing.",
+    "Ready for a stream of clever code ideas?",
+    "Your environment is healthy and responsive.",
+    "The machine is ready for your next prompt.",
+    "Your workspace is tailored for creative code work.",
+    "The command line now has a little more sparkle.",
+    "A fresh local session is ready to roll.",
+    "Your code companion is waiting for instructions.",
+    "The CLI is energized and prepared.",
+    "Welcome back, master of the development realm.",
+    "Another fine moment to ship smarter code.",
+    "Your local AI assistant is prepped and playful.",
+    "The UX of coding is ready to shine again.",
+    "The application is live with fresh possibility.",
+    "Your workspace is tuned for next-level creation.",
+    "Let's turn your ideas into elegant implementations.",
+    "Welcome to the future of local code assistance.",
+    "The session banner is bright and optimistic.",
+    "A new coding adventure starts in this terminal.",
+    "The environment is warmed up and ready.",
+    "A world of code improvements awaits you.",
+    "Your project is ready for another creative pass.",
+    "The Geocentric agent is standing by.",
+    "Ready to invent a better development flow?",
+    "The toolchain is prepared for your next ask.",
+    "A new round of clever interactions begins.",
+    "Your local AI dashboard is glowing with potential.",
+    "Get ready to build something remarkable.",
+    "The session is primed for efficient progress.",
+    "Your workspace is once again the center of creation.",
+    "Another thoughtful coding session is here.",
+    "The terminal is set for your next inspiration.",
+    "Your coding companion is ready to collaborate.",
+    "The project board is clear and inviting.",
+    "The local AI is ready to help you go further.",
+    "Hello again, champion of elegant code.",
+    "Your workspace has a fresh creative vibe.",
+    "The terminal is your sketchbook again.",
+    "Let's make this session feel epic and efficient.",
+    "A new run of productive coding begins.",
+    "Your system is ready for thoughtful work.",
+    "The command line has returned to its calling.",
+    "The agent and project are ready to collaborate.",
+    "Welcome to another session of polished output.",
+    "Your development environment is lively again.",
+    "The local AI is eager to turn intent into code.",
+    "A new sequence of creative engineering starts.",
+    "The workspace is fueled with fresh logic.",
+    "Your terminal is ready for your next elegant command.",
+    "The project engine is running and ready.",
+    "The session has a renewed sense of focus.",
+    "A brighter coding experience begins right now.",
+    "Your toolchain is ready and responsive.",
+    "The system is tuned for rapid creative flow.",
+    "The project prompt is ready for your genius.",
+    "Welcome back, code artist. Let's build.",
+    "A new session for making great software begins.",
+    "The terminal is now a smart workshop again.",
+    "Your local model is waiting for your directions.",
+    "A fresh batch of ideas is ready to manifest.",
+    "The local CLI is your creative launching pad.",
+    "Another great coding adventure is ready to start.",
+    "Your environment is set for memorable development.",
+    "The project is ready for another brilliant iteration.",
+    "Welcome back to your personal code studio.",
+    "A new prompt can become something great.",
+    "The session has restarted with bright momentum.",
+]
+
+THINKING_WORDS = [
+    "dilly dalling",
+    "Explodiousing",
+    "whimsy-walking",
+    "thought-bubbling",
+    "sparkle-musing",
+    "giga-grazing",
+    "brain-bobbing",
+    "fantasia-fiddling",
+    "zany-zooming",
+    "flux-fluttering",
+    "puzzle-piloting",
+    "giggle-grooving",
+    "cloud-crafting",
+    "hyper-hatching",
+    "silly-synthesizing",
+    "fizz-factoring",
+    "meta-matching",
+    "neon-navigating",
+    "whirligig-wondering",
+    "bubble-braining",
+    "jiggly-judging",
+    "quantum-quizzing",
+    "twinkle-tweaking",
+    "bravo-brainstorming",
+    "fumble-factoring",
+    "mystic-mulling",
+    "sprocket-surfing",
+    "luminous-lurching",
+    "cipher-snoozing",
+    "fable-fusing",
+    "peppermint-planning",
+    "cosmic-cogitating",
+    "jazzy-juicing",
+    "glitter-grappling",
+    "plasma-puzzling",
+    "whiz-bang-wondering",
+    "dream-doodling",
+    "rocket-ruminating",
+    "glyph-gazing",
+    "bubble-wrap-wondering",
+    "marvel-making",
+    "pixel-planning",
+    "tango-thinking",
+    "nebula-noodling",
+    "fluffy-factoring",
+    "banana-brainstorming",
+    "crackle-calculating",
+    "prism-pondering",
+    "jelly-jumping",
+    "doodle-deducing",
+    "bubblebursting",
+    "spark-scrutinizing",
+    "whisper-wondering",
+    "fuzzy-factoring",
+    "nebula-navigating",
+    "quantum-quilting",
+    "sugar-synthesizing",
+    "polka-planning",
+    "giggle-grokking",
+    "ripple-reasoning",
+    "mango-musing",
+    "pixel-planning",
+    "zest-zoning",
+    "whirly-whispering",
+    "fizz-flipping",
+    "candy-cogitating",
+    "vortex-vining",
+    "fancy-focusing",
+    "magnet-mulling",
+    "tinker-thinking",
+    "sorbet-solving",
+    "prism-pixelating",
+    "bouncy-brooding",
+    "puzzle-plaiting",
+    "kaleido-knitting",
+    "rocket-riffing",
+    "garden-grappling",
+    "whim-wham-working",
+    "sparkle-sieving",
+    "firefly-factoring",
+    "bubble-bridging",
+    "daydream-drafting",
+    "whisker-wondering",
+    "clowning-through",
+    "mango-mapping",
+    "tinsel-thinking",
+    "plume-planning",
+    "glow-getting",
+    "cosmic-cooking",
+    "spice-sorting",
+    "pixie-predicting",
+    "tango-tuning",
+    "wiggle-wondering",
+    "tornado-thinking",
+    "yarn-yielding",
+    "mystery-mapping",
+    "bubble-bursting",
+    "fable-flickering",
+    "polka-producing",
+    "zippy-zoning",
+    "marshmallow-musing",
+    "sunbeam-sorting",
+    "gadget-gazing",
+    "driftwood-dreaming",
+    "hyper-honing",
+    "quasar-questioning",
+    "sprinkle-scripting",
+    "planet-predicting",
+    "echo-examining",
+    "puzzle-painting",
+    "mystic-mirroring",
+    "fizz-finessing",
+    "whirlwind-wondering",
+    "crystal-crafting",
+    "reflection-riffing",
+    "sprocket-scheming",
+    "doodle-detecting",
+    "pixel-painting",
+    "glimmer-guessing",
+    "mercury-mulling",
+    "flamingo-focusing",
+    "bubble-baking",
+    "tornado-tinkering",
+    "lunar-leaning",
+    "opal-observing",
+    "copper-cogitating",
+    "misty-mapping",
+    "echo-engineering",
+    "glitter-glancing",
+    "fairy-factoring",
+    "scarlet-sifting",
+    "aurora-answering",
+    "whisk-whispering",
+    "jubilant-judging",
+    "sunshine-sorting",
+    "fizzing-finding",
+    "mystic-meshing",
+    "silly-synthesizing",
+]
 
 _EARTH_ART = (
     "       .-'-.",
@@ -70,6 +328,7 @@ class ClaudeCodeDashboard:
     mode: str
     server: str
     effort: str = "medium"
+    edition: str = "free"
     cwd: str = field(default_factory=os.getcwd)
     history: list[HistoryLine] = field(default_factory=list)
     token_count: int = 0
@@ -111,7 +370,8 @@ class ClaudeCodeDashboard:
 
     def print_welcome_banner(self) -> None:
         inner = self._inner_width()
-        title = f" Geocentric Code v{__version__} "
+        edition_tag = " · PRO ✦" if self.edition == "pro" else ""
+        title = f" Geocentric Code v{__version__}{edition_tag} "
         top = "╭───" + title + "─" * max(1, inner - len(title) - 3) + "╮"
 
         left_w = max(28, inner // 2 - 2)
@@ -127,7 +387,7 @@ class ClaudeCodeDashboard:
         right_body.append("─" * min(right_w, 70))
         right_body.extend(_wrap("What's new", right_w))
         right_body.extend(_wrap(
-            "Geocentric Code — local AI coding agent powered by Ollama on your machine",
+            f"Geocentric Code v{__version__} now includes skill install/uninstall, rainbow thinking, and fast returnturn support.",
             right_w,
         ))
         right_body.extend(_wrap(
@@ -139,7 +399,7 @@ class ClaudeCodeDashboard:
             right_w,
         ))
 
-        left_rows: list[str] = ["", "Welcome back!", ""] + list(_EARTH_ART) + ["", _truncate(model_line, left_w), _truncate(cwd_line, left_w)]
+        left_rows: list[str] = ["", random.choice(WELCOME_PHRASES), ""] + list(_EARTH_ART) + ["", _truncate(model_line, left_w), _truncate(cwd_line, left_w)]
 
         height = max(len(left_rows), len(right_body))
         while len(left_rows) < height:
@@ -285,11 +545,14 @@ class ClaudeCodeDashboard:
 
     def _draw_thinking_line(self) -> None:
         spin = self.SPINNER[self._spinner_i]
-        detail = _truncate(self.thinking_detail or "…", max(20, self._inner_width() - 28))
-        tokens = format_tokens(max(self.token_count, self.reasoning_tokens))
+        detail = _truncate(self.thinking_detail or "…", max(24, self._inner_width() - 32))
+        tokens = format_tokens(self.token_count + self.reasoning_tokens)
+        colors = [C.RED, C.ORANGE, C.YELLOW, C.GREEN, C.CYAN, C.BLUE, C.MAGENTA]
+        color = colors[self._spinner_i % len(colors)]
+        label = THINKING_WORDS[self._spinner_i % len(THINKING_WORDS)]
         line = (
-            paint(f"  {spin} ", C.SOFT_GREEN)
-            + paint("Thinking", C.SOFT_GREEN, C.BOLD)
+            paint(f"  {spin} ", color)
+            + paint(label, color, C.BOLD)
             + paint(f" • {detail}  ", C.GRAY)
             + paint(f"Tokens: {tokens}", C.DIM)
         )

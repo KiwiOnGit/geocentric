@@ -2,29 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
 import uuid
-from http.client import IncompleteRead
+from pathlib import Path
 from typing import Any, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from geocentric.agent.config import AgentConfig
+from geocentric.agent.transport import LocalCoreTransport, RemoteHttpTransport, TransportClient
+from geocentric.agent.types import Message as AgentMessage
+from geocentric.agent.types import ToolCall
 from geocentric.cli_commands import COMMAND_REGISTRY, all_command_names, handle_slash
 from geocentric.cli_completer import SlashOnlyCompleter
 from geocentric.cli_dashboard import ClaudeCodeDashboard
 from geocentric.cli_session import SessionState, load_conversation_history, save_checkpoint, save_conversation_history, save_session
-from geocentric.cli_system_prompt import load_system_prompt
-from geocentric.cli_ui import (
-    C,
-    estimate_tokens,
-    extract_tool_actions,
-    filter_stream_noise,
-    latest_status,
-    paint,
-    strip_internal_tags,
-)
+from geocentric.cli_ui import C, estimate_tokens, paint, strip_internal_tags
 
 DEFAULT_SERVER = os.environ.get("GEOCENTRIC_SERVER", "http://127.0.0.1:8000")
 CONFIG_PATH = os.path.expanduser("~/.geocentric/cli.json")
@@ -39,6 +35,12 @@ class CliConfig:
         self.agent_mode: bool = True
         self.search_web: bool = False
         self.conversation_id: str = uuid.uuid4().hex
+        # New in-process agent core (default): no server process required.
+        # Set to "remote" automatically by /connect or --server, preserving
+        # today's client/server behavior for that explicit opt-in.
+        self.transport_mode: str = "local"
+        self.provider: str = "ollama"
+        self.beta_enabled: bool = False
 
     @classmethod
     def load(cls) -> "CliConfig":
@@ -65,6 +67,9 @@ class CliConfig:
                     "token": self.token,
                     "agent_mode": self.agent_mode,
                     "search_web": self.search_web,
+                    "transport_mode": self.transport_mode,
+                    "provider": self.provider,
+                    "beta_enabled": self.beta_enabled,
                 },
                 fh,
                 indent=2,
@@ -91,19 +96,6 @@ def _request_json(url: str, method: str = "GET", payload: Optional[dict] = None,
         return json.loads(body) if body else {}
 
 
-def _extract_delta(packet: dict) -> tuple[str, str]:
-    if not isinstance(packet, dict):
-        return str(packet or ""), ""
-    choices = packet.get("choices") or []
-    if choices:
-        delta = choices[0].get("delta") or {}
-        return str(delta.get("content") or ""), str(delta.get("reasoning_content") or "")
-    return (
-        str(packet.get("reply") or packet.get("content") or packet.get("text") or ""),
-        str(packet.get("reasoning_content") or packet.get("thinking") or ""),
-    )
-
-
 class InteractiveCLI:
     _normalize_server = staticmethod(_normalize_server)
 
@@ -119,20 +111,23 @@ class InteractiveCLI:
         self.pending_skill: str = ""
         self.pending_directive: str = ""
         self.btw_message: str = ""
-        self._seen_tools: set[str] = set()
         self._commands = all_command_names()
         self._cmd_desc = {c.name: c.description for c in COMMAND_REGISTRY}
+        from geocentric import edition as _edition
+
         self.dash = ClaudeCodeDashboard(
             model=config.model,
             mode=config.model_mode,
             server=config.server,
             effort=self.session.effort,
+            edition=_edition.get_entitlement().edition,
             cwd=os.getcwd(),
         )
         self._prompt_session = None
         self._force_mode = force
         self._auto_accept = False
         self._continue_chat = continue_chat
+        self.transport: TransportClient = self._build_transport()
 
     def _url(self, path: str) -> str:
         return f"{self.config.server}{path if path.startswith('/') else '/' + path}"
@@ -140,26 +135,73 @@ class InteractiveCLI:
     def api_get(self, path: str) -> Any:
         return _request_json(self._url(path), token=self.config.token, timeout=15)
 
+    def _build_transport(self) -> TransportClient:
+        if self.config.transport_mode == "remote":
+            return RemoteHttpTransport(
+                self.config.server, token=self.config.token, model=self.config.model, model_mode=self.config.model_mode
+            )
+        return LocalCoreTransport(
+            workspace_dir=Path(os.getcwd()),
+            approve=self._approve_tool_call,
+            on_status=lambda detail: self.dash.update_thinking(detail=detail),
+        )
+
+    def rebuild_transport(self) -> None:
+        """Call after mutating config.transport_mode/server/token (e.g. /connect, /server)."""
+        self.transport = self._build_transport()
+
+    def _agent_config(self) -> AgentConfig:
+        from geocentric import edition
+
+        provider = self.config.provider
+        if not edition.provider_allowed(provider):
+            provider = "ollama"
+        return AgentConfig(
+            provider=provider,
+            model=self.config.model,
+            effort=edition.clamp_effort(self.session.effort),
+            agent_mode=self.config.agent_mode,
+            search_web=self.config.search_web,
+            turn_limit=edition.max_turn_limit(),
+        )
+
+    async def _approve_tool_call(self, call: ToolCall) -> bool:
+        if self._force_mode or self._auto_accept:
+            self.dash.add("status", f"Auto-accepted {call.name}")
+            return True
+        return await asyncio.to_thread(self._prompt_for_tool_call_sync, call)
+
+    def _prompt_for_tool_call_sync(self, call: ToolCall) -> bool:
+        print()
+        print(paint("┌" + "─" * 72 + "┐", C.SOFT_PURPLE, C.BOLD))
+        print(paint("│ Approve tool action", C.SOFT_PURPLE, C.BOLD))
+        print(paint("├" + "─" * 72 + "┤", C.SOFT_PURPLE, C.BOLD))
+        detail_lines = [call.name] + [f"{k}={v}" for k, v in call.arguments.items()]
+        for raw_line in detail_lines:
+            text_line = str(raw_line).replace("\n", " ")
+            print(paint(f"│ {text_line[:70]:<70} │", C.BRIGHT_WHITE))
+        print(paint("└" + "─" * 72 + "┘", C.SOFT_PURPLE, C.BOLD))
+        answer = input("[y/N] Approve this action? ").strip().lower()
+        print()
+        return answer in {"y", "yes"}
+
     def ping(self) -> bool:
         try:
-            _request_json(self._url("/api/status"), timeout=5)
-            return True
+            return asyncio.run(self.transport.ping())
         except Exception:
-            try:
-                _request_json(self._url("/api/v1/models"), timeout=5)
-                return True
-            except Exception:
-                return False
+            return False
 
     def list_models(self) -> list[str]:
-        data = _request_json(self._url("/api/v1/models"), token=self.config.token, timeout=15)
-        return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+        return asyncio.run(self.transport.list_models())
 
     def _sync_dash(self) -> None:
+        from geocentric import edition as _edition
+
         self.dash.model = self.config.model
         self.dash.mode = self.config.model_mode
         self.dash.server = self.config.server
         self.dash.effort = self.session.effort
+        self.dash.edition = _edition.get_entitlement().edition
         self.dash.set_tokens(self.session.token_usage)
 
     def _load_resume_context(self) -> None:
@@ -173,24 +215,6 @@ class InteractiveCLI:
         self.session.conversation_id = self._continue_chat
         self.config.conversation_id = self._continue_chat
         save_conversation_history(self._continue_chat, history)
-
-    def _should_prompt_for_tool(self, tool_name: str) -> bool:
-        return tool_name in {"run_command", "run_shell", "run_bg_command", "run_python", "run_node", "run_binary", "agent_terminal", "write_file", "append_file", "edit_file", "delete_file", "move_file", "apply_patch"}
-
-    def _prompt_for_tool_action(self, action) -> bool:
-        if self._force_mode or self._auto_accept:
-            self.dash.add("status", f"Auto-accepted {action.tool}")
-            return True
-        print()
-        print(paint("┌" + "─" * 72 + "┐", C.SOFT_PURPLE, C.BOLD))
-        print(paint("│ Approve tool action", C.SOFT_PURPLE, C.BOLD))
-        print(paint("├" + "─" * 72 + "┤", C.SOFT_PURPLE, C.BOLD))
-        for line in (action.raw or action.detail or action.tool).splitlines() or [""]:
-            print(paint(f"│ {line[:70]:<70} │", C.BRIGHT_WHITE))
-        print(paint("└" + "─" * 72 + "┘", C.SOFT_PURPLE, C.BOLD))
-        answer = input("[y/N] Approve this action? ").strip().lower()
-        print()
-        return answer in {"y", "yes"}
 
     def _build_user_message(self, user_text: str) -> str:
         parts: list[str] = []
@@ -208,37 +232,17 @@ class InteractiveCLI:
         return user_text
 
     def stream_chat(self, user_text: str) -> str:
+        return asyncio.run(self._stream_chat_async(user_text))
+
+    async def _stream_chat_async(self, user_text: str) -> str:
         effective = self._build_user_message(user_text)
-        payload = {
-            "model": self.config.model,
-            "mode": self.config.model_mode,
-            "modelMode": self.config.model_mode,
-            "searchWeb": self.config.search_web,
-            "conversationId": self.config.conversation_id,
-            "agentMode": self.config.agent_mode,
-            "projectPath": os.getcwd(),
-            "systemPrompt": load_system_prompt(),
-            "stream": True,
-            "effort": self.session.effort,
-            "messages": self.messages + [{"role": "user", "content": effective}],
-        }
-        headers = {"Content-Type": "application/json", "X-Geocentric-Client": "cli"}
-        if self.config.token:
-            headers["Authorization"] = f"Bearer {self.config.token}"
-        req = Request(
-            self._url("/api/chat"),
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
+        turn_messages = [AgentMessage(role=m["role"], content=m["content"]) for m in self.messages]
+        turn_messages.append(AgentMessage(role="user", content=effective))
 
         raw = ""
         reasoning_buf = ""
-        last_status = ""
         reasoning_tokens = 0
         stream_tokens = 0
-        usage_payload: Optional[dict[str, Any]] = None
-        self._seen_tools.clear()
         self.dash.clear_thinking()
         self.dash.clear_streaming()
         self.dash.token_count = 0
@@ -247,110 +251,39 @@ class InteractiveCLI:
         self.dash.reasoning_tokens = 0
         self.dash.update_thinking(detail="Starting…", reasoning_tokens=0, token_count=0)
 
-        with urlopen(req, timeout=600) as resp:
-            content_type = resp.headers.get("Content-Type") or ""
-            if "text/event-stream" not in content_type:
-                body = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
-                raw = filter_stream_noise(_extract_delta(body)[0] or str(body.get("reply") or ""))
-                stream_tokens += estimate_tokens(raw)
-                clean = strip_internal_tags(raw)
-                self.dash.finish_assistant(clean)
-                self.session.token_usage += stream_tokens
-                self._sync_dash()
-                return clean
-
-            buffer = ""
-
-            def process_packet(packet: str) -> None:
-                nonlocal raw, reasoning_buf, last_status, reasoning_tokens, stream_tokens, usage_payload
-                for line in packet.split("\n"):
-                    if not line.startswith("data:"):
-                        continue
-                    data_str = line[5:].strip()
-                    if data_str == "[DONE]":
-                        return
-                    try:
-                        parsed = json.loads(data_str)
-                    except Exception:
-                        continue
-                    content, reasoning = _extract_delta(parsed)
-                    content = filter_stream_noise(content)
-                    reasoning = filter_stream_noise(reasoning)
-                    usage_payload = None
-                    if isinstance(parsed, dict):
-                        usage_payload = parsed.get("usage") if isinstance(parsed.get("usage"), dict) else None
-
-                    if reasoning:
-                        reasoning_buf += reasoning
-                        reasoning_tokens += estimate_tokens(reasoning)
-                        stream_tokens += estimate_tokens(reasoning)
-                        detail = latest_status(raw) or reasoning.strip().splitlines()[-1][:80] or "Reasoning…"
-                        self.dash.update_thinking(
-                            detail=detail,
-                            reasoning_tokens=reasoning_tokens,
-                            usage=usage_payload,
-                            token_count=stream_tokens,
-                        )
-
-                    if content:
-                        raw += content
-                        stream_tokens += estimate_tokens(content)
-                        status = latest_status(raw)
-                        if status and status != last_status:
-                            last_status = status
-                            self.dash.update_thinking(
-                                detail=status,
-                                reasoning_tokens=reasoning_tokens,
-                                usage=usage_payload,
-                                token_count=stream_tokens,
-                            )
-                        elif not reasoning_buf:
-                            self.dash.update_thinking(
-                                detail=latest_status(raw) or "Generating response…",
-                                reasoning_tokens=reasoning_tokens,
-                                usage=usage_payload,
-                                token_count=stream_tokens,
-                            )
-
-                        for action in extract_tool_actions(raw, self._seen_tools):
-                            if self._should_prompt_for_tool(action.tool):
-                                approved = self._prompt_for_tool_action(action)
-                                if not approved:
-                                    self.dash.add("status", f"Cancelled {action.tool}")
-                                    continue
-                            detail = action.detail or action.tool.replace("_", " ")
-                            self.dash.update_thinking(
-                                detail=f"Running {detail}",
-                                reasoning_tokens=reasoning_tokens,
-                                token_count=stream_tokens,
-                            )
-                            self.dash.add("tool", f"Running: {detail}")
-
-                    if usage_payload:
-                        self.dash.update_thinking(
-                            detail=last_status or "Generating response…",
-                            reasoning_tokens=reasoning_tokens,
-                            usage=usage_payload,
-                            token_count=stream_tokens,
-                        )
-
-            while True:
-                try:
-                    chunk = resp.read(4096)
-                except IncompleteRead as exc:
-                    if exc.partial:
-                        buffer += exc.partial.decode("utf-8", errors="replace")
-                    break
-                if not chunk:
-                    break
-                buffer += chunk.decode("utf-8", errors="replace")
-                while "\n\n" in buffer:
-                    packet, buffer = buffer.split("\n\n", 1)
-                    process_packet(packet)
-
-            if buffer.strip():
-                for packet in [part for part in buffer.split("\n\n") if part.strip()]:
-                    process_packet(packet)
+        async for event in self.transport.run_turn(turn_messages, self._agent_config()):
+            if event.kind == "text_delta":
+                raw += event.text
+                stream_tokens += estimate_tokens(event.text)
+                self.dash.update_thinking(
+                    detail="Generating response…", reasoning_tokens=reasoning_tokens, token_count=stream_tokens
+                )
+            elif event.kind == "reasoning_delta":
+                reasoning_buf += event.text
+                reasoning_tokens += estimate_tokens(event.text)
+                stream_tokens += estimate_tokens(event.text)
+                tail = reasoning_buf.strip().splitlines()
+                self.dash.update_thinking(
+                    detail=tail[-1][:80] if tail else "Reasoning…",
+                    reasoning_tokens=reasoning_tokens,
+                    token_count=stream_tokens,
+                )
+            elif event.kind == "tool_call" and event.tool_call:
+                args_preview = ", ".join(f"{k}={v}" for k, v in event.tool_call.arguments.items())
+                detail = f"{event.tool_call.name}({args_preview})"
+                self.dash.update_thinking(
+                    detail=f"Running {event.tool_call.name}", reasoning_tokens=reasoning_tokens, token_count=stream_tokens
+                )
+                self.dash.add("tool", f"Running: {detail[:100]}")
+            elif event.kind == "usage" and event.usage:
+                self.dash.update_thinking(
+                    detail="Generating response…",
+                    reasoning_tokens=reasoning_tokens,
+                    usage=event.usage,
+                    token_count=stream_tokens,
+                )
+            elif event.kind == "error":
+                self.dash.add("error", event.text)
 
         self.session.token_usage += stream_tokens
         final = strip_internal_tags(raw)
@@ -358,9 +291,6 @@ class InteractiveCLI:
             self.dash.finish_assistant(final)
         elif reasoning_buf.strip():
             self.dash.finish_assistant(reasoning_buf.strip(), dim=True)
-        elif last_status:
-            self.dash.clear_thinking()
-            self.dash.add("status", last_status)
         else:
             self.dash.clear_thinking()
         self._sync_dash()
@@ -462,14 +392,23 @@ class InteractiveCLI:
         return line
 
     def repl(self) -> None:
+        from geocentric import edition as _edition
+        from geocentric import licensing as _licensing
+
+        if _edition.needs_reverify():
+            try:
+                _edition.reverify(_licensing.check_key_status)
+            except Exception:
+                pass  # fails open -- keep cached Pro status if the backend is unreachable
+
         self._load_resume_context()
         fresh_start = not bool(self._continue_chat) and not self.messages
         self._sync_dash()
         self.dash.enter()
         if self.ping():
             self._ensure_valid_model()
-        if not self.ping():
-            self.dash.add("error", "Server not reachable — start with ./run.sh or use /connect")
+        elif self.config.transport_mode == "remote":
+            self.dash.add("error", f"Remote server {self.config.server} not reachable — check it's running, or use /server local")
         save_session(self.session)
 
         try:
@@ -532,6 +471,7 @@ def run_interactive_cli(
     config = CliConfig.load()
     if server:
         config.server = _normalize_server(server)
+        config.transport_mode = "remote"
     if model:
         config.model = model
     if mode:

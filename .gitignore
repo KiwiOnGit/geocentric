@@ -47,6 +47,14 @@ data/*.jsonl
 data/*.txt
 data/*.json
 
+# Runtime state / build artifacts / scratch
+.geocentric/
+*.bak
+*.dmg
+workspaces/
+uploads/
+TestDir/
+
 # IDEs & System files
 .idea/
 .vscode/

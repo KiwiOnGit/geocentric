@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import platform
+import random
+import re
 import shutil
 import subprocess
 import sys
@@ -56,6 +58,11 @@ def _all_commands() -> list[SlashCommand]:
         SlashCommand("/effort", "Reasoning intensity (low|medium|high|max)", "Model"),
         SlashCommand("/mode", "Switch thinking|instant mode", "Model"),
         SlashCommand("/plan", "Toggle planning mode before edits", "Model"),
+        SlashCommand("/provider", "Switch model provider (ollama|anthropic|openai|openrouter|gemini|local)", "Model"),
+        SlashCommand("/apikey", "Set, clear, or list stored provider API keys", "Model"),
+        # Account
+        SlashCommand("/activate", "Activate a Pro supporter key", "Account"),
+        SlashCommand("/beta", "Toggle beta features (Pro only)", "Account"),
         # Project
         SlashCommand("/init", "Generate GEOCENTRIC.md from repo scan", "Project"),
         SlashCommand("/memory", "Edit project memory file", "Project"),
@@ -74,6 +81,10 @@ def _all_commands() -> list[SlashCommand]:
         SlashCommand("/connect", "Connect to a Geocentric host", "Local"),
         SlashCommand("/skills", "List installed skills", "Local"),
         SlashCommand("/agents", "Toggle coordinator mode for parallel sub-tasks", "Workflow"),
+        SlashCommand("/btw", "Add context or a side note to the next request", "Workflow"),
+        SlashCommand("/installskill", "Install a local skill directory into the skill store", "Skills"),
+        SlashCommand("/uninstallskill", "Remove an installed skill by name", "Skills"),
+        SlashCommand("/makeskill", "Create a new skill scaffold in skills/", "Skills"),
         # Remote shell (WiFi access)
         SlashCommand("/ls", "List remote directory", "Remote"),
         SlashCommand("/cd", "Change remote directory", "Remote"),
@@ -113,6 +124,69 @@ def discover_skills() -> dict[str, Path]:
 
 def all_command_names() -> list[str]:
     return sorted(set(COMMAND_NAMES) | set(discover_skills().keys()))
+
+
+def skill_roots() -> list[Path]:
+    return [
+        Path.cwd() / ".claude" / "skills",
+        Path.cwd() / "skills",
+        Path(os.path.expanduser("~/.geocentric/skills")),
+    ]
+
+
+def install_skill(source_dir: str) -> Path:
+    src = Path(source_dir).expanduser().resolve()
+    if not src.exists():
+        raise ValueError(f"Skill path does not exist: {source_dir}")
+    if src.is_file() and src.name.lower() == "skill.md":
+        src = src.parent
+    if not src.is_dir():
+        raise ValueError(f"Skill path must be a directory: {source_dir}")
+    skill_name = src.name
+    dest_root = Path(os.path.expanduser("~/.geocentric/skills"))
+    dest_root.mkdir(parents=True, exist_ok=True)
+    dest = dest_root / skill_name
+    if dest.exists():
+        raise ValueError(f"Skill already installed: {skill_name}")
+    shutil.copytree(src, dest)
+    return dest
+
+
+def uninstall_skill(skill_name: str) -> Path:
+    skill_name = skill_name.strip().lstrip("/")
+    found = discover_skills()
+    target = None
+    for name, path in found.items():
+        if name.lstrip("/").lower() == skill_name.lower() or path.parent.name.lower() == skill_name.lower():
+            target = path.parent
+            break
+    if not target:
+        raise ValueError(f"Installed skill not found: {skill_name}")
+    shutil.rmtree(target)
+    return target
+
+
+def make_skill(name: str) -> Path:
+    if not name or any(ch in name for ch in ("/", "\\", "..")):
+        raise ValueError("Skill name must be a simple identifier without path separators.")
+    dest_root = Path.cwd() / "skills"
+    dest_root.mkdir(parents=True, exist_ok=True)
+    skill_dir = dest_root / name
+    if skill_dir.exists():
+        raise ValueError(f"Skill already exists: {name}")
+    skill_dir.mkdir(parents=True)
+    skill_md = skill_dir / "SKILL.md"
+    skill_md.write_text(
+        f"# {name}\n\n" \
+        "Describe the skill here.\n\n" \
+        "Use this file to teach Geocentric Code how to handle a specific kind of task, with examples and expected behavior.\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "README.md").write_text(
+        "# " + name + "\n\nThis skill is installed in Geocentric Code and can be invoked with its skill name or with /" + name + ".\n",
+        encoding="utf-8",
+    )
+    return skill_dir
 
 
 def print_full_help() -> None:
@@ -278,12 +352,18 @@ def handle_slash(cli: "InteractiveCLI", line: str) -> bool:
         return True
 
     if cmd == "/effort":
+        from geocentric import edition
+
         levels = {"low", "medium", "high", "max"}
         if args and args[0].lower() in levels:
-            cli.session.effort = args[0].lower()
+            requested = args[0].lower()
+            clamped = edition.clamp_effort(requested)
+            cli.session.effort = clamped
             cli.dash.set_effort(cli.session.effort)
             save_session(cli.session)
-        print(format_info(f"Effort: {cli.session.effort}  (low · medium · high · max)"))
+            if clamped != requested:
+                print(format_info(f"'{requested}' is Pro-only — capped at '{clamped}' on Free. Use /activate <key> to unlock."))
+        print(format_info(f"Effort: {cli.session.effort}  (low · medium · high · max, Free capped at {edition.max_effort()})"))
         return True
 
     if cmd == "/plan":
@@ -291,6 +371,105 @@ def handle_slash(cli: "InteractiveCLI", line: str) -> bool:
         save_session(cli.session)
         state = "on" if cli.session.plan_mode else "off"
         print(format_success(f"Planning mode {state}."))
+        return True
+
+    if cmd == "/provider":
+        from geocentric import edition
+        from geocentric.agent.config import PROVIDER_NAMES
+
+        if args:
+            name = args[0].lower()
+            if name not in PROVIDER_NAMES:
+                print(format_error(f"Unknown provider '{name}'. Available: {', '.join(PROVIDER_NAMES)}"))
+                return True
+            if not edition.provider_allowed(name):
+                print(format_error(f"'{name}' is a Pro provider. Free is local-only (ollama/local). Use /activate <key> to unlock cloud providers."))
+                return True
+            cli.config.provider = name
+            cli.config.save()
+            cli.rebuild_transport()
+            print(format_success(f"Provider: {name}"))
+        else:
+            from geocentric.agent.keys import default_store
+
+            store = default_store()
+            print(format_info(f"Current provider: {cli.config.provider}"))
+            for name in PROVIDER_NAMES:
+                mark = " *" if name == cli.config.provider else ""
+                key_status = store.source(name) if name != "local" else "n/a"
+                locked = "" if edition.provider_allowed(name) else "  [Pro only]"
+                print(f"    {name}{mark}  (api key: {key_status}){locked}")
+        return True
+
+    if cmd == "/apikey":
+        from geocentric.agent.config import PROVIDER_NAMES
+        from geocentric.agent.keys import default_store
+
+        store = default_store()
+        if not args:
+            configured = store.configured_providers()
+            print(format_info("Configured API keys:"))
+            if not configured:
+                print("    (none set — use /apikey <provider> to add one)")
+            for name, source in configured.items():
+                print(f"    {name}: {source}")
+            return True
+
+        provider = args[0].lower()
+        if provider not in PROVIDER_NAMES or provider == "local":
+            print(format_error(f"Unknown provider '{provider}'. Available: {', '.join(n for n in PROVIDER_NAMES if n != 'local')}"))
+            return True
+
+        if len(args) > 1 and args[1].lower() == "--clear":
+            store.clear(provider)
+            print(format_success(f"Cleared stored key for {provider}."))
+            return True
+
+        try:
+            import getpass
+
+            value = args[1] if len(args) > 1 else getpass.getpass(f"{provider} API key: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return True
+        if not value:
+            print(format_error("No key provided."))
+            return True
+        try:
+            store.set(provider, value)
+        except RuntimeError as exc:
+            print(format_error(str(exc)))
+            return True
+        print(format_success(f"Stored API key for {provider} in the system keyring."))
+        return True
+
+    if cmd == "/activate":
+        from geocentric import edition, licensing
+
+        if edition.is_pro():
+            print(format_info("Already Pro. Use /activate <new-key> to switch to a different key."))
+        key = args[0] if args else input("Pro key: ").strip()
+        if not key:
+            print(format_error("No key provided."))
+            return True
+        ok, message = edition.activate(key, licensing.redeem_key)
+        if ok:
+            print(format_success("Pro activated. Thanks for supporting Geocentric Code! 🎉"))
+            cli.dash.edition = "pro"
+        else:
+            reason = "that key has already been used, was revoked, or doesn't exist" if message == "invalid_or_used_key" else message
+            print(format_error(f"Activation failed: {reason}"))
+        return True
+
+    if cmd == "/beta":
+        from geocentric import edition
+
+        if not edition.beta_allowed():
+            print(format_error("Beta features are a Pro perk. Use /activate <key> to unlock them."))
+            return True
+        cli.config.beta_enabled = not cli.config.beta_enabled
+        cli.config.save()
+        print(format_success(f"Beta features {'enabled' if cli.config.beta_enabled else 'disabled'}."))
         return True
 
     if cmd == "/mode":
@@ -320,7 +499,7 @@ def handle_slash(cli: "InteractiveCLI", line: str) -> bool:
                 shutil.copy(templates, mem)
             else:
                 mem.write_text("# Project Memory\n\n", encoding="utf-8")
-        editor = os.environ.get("EDITOR", "nano")
+        editor = os.environ.get("EDITOR", "notepad" if os.name == "nt" else "nano")
         subprocess.run([editor, str(mem)], check=False)
         return True
 
@@ -356,7 +535,11 @@ def handle_slash(cli: "InteractiveCLI", line: str) -> bool:
         return True
 
     if cmd == "/status":
-        print(format_info(f"Server:   {cli.config.server}"))
+        from geocentric import edition
+
+        print(format_info(f"Edition:  {edition.edition_label()}" + ("" if edition.is_pro() else "  (use /activate <key> to unlock Pro)")))
+        print(format_info(f"Transport: {cli.config.transport_mode}  ({'local in-process' if cli.config.transport_mode == 'local' else cli.config.server})"))
+        print(format_info(f"Provider: {cli.config.provider}"))
         print(format_info(f"Model:    {cli.config.model}"))
         print(format_info(f"Mode:     {cli.config.model_mode}"))
         print(format_info(f"Effort:   {cli.session.effort}"))
@@ -395,10 +578,19 @@ def handle_slash(cli: "InteractiveCLI", line: str) -> bool:
         return True
 
     if cmd == "/server":
+        if args and args[0].lower() == "local":
+            cli.config.transport_mode = "local"
+            cli.config.save()
+            cli.rebuild_transport()
+            print(format_success("Switched to local in-process mode (no server required)."))
+            return True
         if args:
             cli.config.server = cli._normalize_server(args[0])
+            cli.config.transport_mode = "remote"
             cli.config.save()
             cli.dash.server = cli.config.server
+            cli.rebuild_transport()
+        print(format_info(f"Transport: {cli.config.transport_mode}"))
         print(format_info(f"Server: {cli.config.server}"))
         print(format_info(f"Connection: {'OK' if cli.ping() else 'FAILED'}"))
         return True
@@ -406,13 +598,20 @@ def handle_slash(cli: "InteractiveCLI", line: str) -> bool:
     if cmd == "/connect":
         host = args[0] if args else input("Server URL (e.g. 192.168.1.10:8000): ").strip()
         cli.config.server = cli._normalize_server(host)
+        cli.config.transport_mode = "remote"
         cli.config.save()
         cli.dash.server = cli.config.server
+        cli.rebuild_transport()
         ok = cli.ping()
         print(format_success(f"Connected to {cli.config.server}") if ok else format_error(f"Could not reach {cli.config.server}"))
         return True
 
     if cmd == "/agents":
+        from geocentric import edition
+
+        if not edition.coordinator_mode_allowed():
+            print(format_error("Coordinator mode (parallel sub-tasks) is a Pro feature. Use /activate <key> to unlock it."))
+            return True
         cli.session.auto_mode = not cli.session.auto_mode
         save_session(cli.session)
         print(format_success(f"Coordinator mode {'on' if cli.session.auto_mode else 'off'}"))
@@ -425,6 +624,49 @@ def handle_slash(cli: "InteractiveCLI", line: str) -> bool:
         else:
             for name, path in sorted(found.items()):
                 print(f"    {name}  →  {path}")
+        return True
+
+    if cmd == "/btw":
+        note = arg_str.strip() or input("BTW note: ").strip()
+        if not note:
+            print(format_error("Please provide text to prefix with /btw."))
+            return True
+        cli.pending_directive = f"[BTW] {note}\n"
+        print(format_success("BTW directive set for the next query."))
+        return True
+
+    if cmd == "/installskill":
+        if not arg_str.strip():
+            print(format_info("Usage: /installskill <path-to-skill-directory>"))
+            return True
+        try:
+            dest = install_skill(arg_str.strip())
+            print(format_success(f"Installed skill: {dest.name} into {dest.parent}"))
+        except Exception as exc:
+            print(format_error(str(exc)))
+        return True
+
+    if cmd == "/uninstallskill":
+        if not arg_str.strip():
+            print(format_info("Usage: /uninstallskill <skill-name>"))
+            return True
+        try:
+            removed = uninstall_skill(arg_str.strip())
+            print(format_success(f"Removed skill: {removed.name} from {removed.parent}"))
+        except Exception as exc:
+            print(format_error(str(exc)))
+        return True
+
+    if cmd == "/makeskill":
+        name = arg_str.strip() or input("Skill name: ").strip()
+        if not name:
+            print(format_error("Please provide a skill name."))
+            return True
+        try:
+            created = make_skill(name)
+            print(format_success(f"Created skill scaffold: {created}"))
+        except Exception as exc:
+            print(format_error(str(exc)))
         return True
 
     if cmd == "/ls":
@@ -541,9 +783,12 @@ def handle_slash(cli: "InteractiveCLI", line: str) -> bool:
 def _run_doctor(cli: "InteractiveCLI") -> None:
     checks: list[tuple[str, bool, str]] = []
     checks.append(("Python 3.9+", sys.version_info >= (3, 9), sys.version.split()[0]))
-    checks.append(("Server reachable", cli.ping(), cli.config.server))
-    venv = Path.cwd() / ".venv" / "bin" / "python"
-    checks.append(("Virtual env", venv.exists(), str(venv)))
+    if cli.config.transport_mode == "local":
+        checks.append(("Local agent core", cli.ping(), "in-process, no server required"))
+    else:
+        checks.append(("Remote server reachable", cli.ping(), cli.config.server))
+    venv_python = Path.cwd() / ".venv" / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+    checks.append(("Virtual env", venv_python.exists(), str(venv_python)))
     try:
         import torch  # noqa: F401
         checks.append(("PyTorch", True, "installed"))

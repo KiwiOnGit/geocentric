@@ -477,10 +477,18 @@ def register_project_workspace(user_id: int | str, chat_id: str, project_path: O
     if not os.access(resolved, os.R_OK | os.W_OK | os.X_OK):
         raise HTTPException(status_code=403, detail="Project directory is not readable and writable.")
 
+    workspace_root = resolved
+    if resolved.name.lower() != "geocentric code":
+        workspace_root = resolved / "Geocentric Code"
+    try:
+        workspace_root.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Could not create Geocentric Code workspace folder: {exc}")
+
     key = (str(user_id), str(chat_id))
     with PROJECT_WORKSPACE_OVERRIDES_LOCK:
-        PROJECT_WORKSPACE_OVERRIDES[key] = resolved
-    return resolved
+        PROJECT_WORKSPACE_OVERRIDES[key] = workspace_root
+    return workspace_root
 
 
 LOCAL_CLI_USER_ID = "cli-local"
@@ -860,6 +868,7 @@ def stat_path_tool(workspace_dir: Path, rel_path: str) -> str:
             f"[STAT PATH RESULT] {rel_path}\n"
             f"Type: {'directory' if target.is_dir() else 'file'}\n"
             f"Size: {st.st_size} bytes\n"
+            f"Created: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(st.st_ctime))}\n"
             f"Modified: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(st.st_mtime))}\n"
             f"Resolved: {target}"
         )
@@ -3119,12 +3128,25 @@ def workspace_output_summary(user_id: int | str, chat_id: str) -> str:
     if not files:
         return "I finished the workspace task. No downloadable project files were created."
 
-    links = [
-        f"- [{rel}](/api/download/{urllib.parse.quote(chat_id)}/{urllib.parse.quote(rel, safe='/')})"
-        for rel in files
-    ]
+    lines: list[str] = []
+    for rel in files:
+        try:
+            path = workspace_dir / rel
+            st = path.stat()
+            size = _format_bytes(st.st_size)
+            file_type = 'directory' if path.is_dir() else 'file'
+            created = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(st.st_ctime))
+            modified = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(st.st_mtime))
+            lines.append(
+                f"- [{rel}](/api/download/{urllib.parse.quote(chat_id)}/{urllib.parse.quote(rel, safe='/')})"
+                f" — {file_type} | {size} | created {created} | modified {modified} | location {path}"
+            )
+        except Exception:
+            lines.append(
+                f"- [{rel}](/api/download/{urllib.parse.quote(chat_id)}/{urllib.parse.quote(rel, safe='/')})"
+            )
     extra = "\n\nThere are more files in the workspace too." if len(files) == 14 else ""
-    return "I finished the workspace task. Here are the files I produced or updated:\n" + "\n".join(links) + extra
+    return "I finished the workspace task. Here are the files I produced or updated:\n" + "\n".join(lines) + extra
 
 
 def _line_count_for_change(path: Path) -> int:

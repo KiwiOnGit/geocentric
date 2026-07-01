@@ -301,6 +301,14 @@ def build_parser() -> argparse.ArgumentParser:
     rm = sub.add_parser("remote", help="Show SSH + LAN instructions for Geocentric Code CLI over WiFi")
     rm.add_argument("--port", type=int, default=8000, help="Server port (default 8000)")
 
+    ad = sub.add_parser("admin", help="Pro license key management (requires the project owner's local admin key)")
+    ad_sub = ad.add_subparsers(dest="admin_cmd", required=True)
+    ad_issue = ad_sub.add_parser("issue-key", help="Issue a new single-use Pro key")
+    ad_issue.add_argument("--note", default="", help="Optional note (e.g. supporter name) stored alongside the key")
+    ad_revoke = ad_sub.add_parser("revoke-key", help="Revoke a Pro key (blocks future activation; deactivates it on next re-verify if already redeemed)")
+    ad_revoke.add_argument("key", help="The key to revoke")
+    ad_sub.add_parser("list-keys", help="List all issued Pro keys and their status")
+
     return p
 
 
@@ -904,6 +912,34 @@ def run_list_models_command() -> None:
     print("=" * 80)
 
 
+def _run_admin_command(args) -> None:
+    from geocentric import licensing
+
+    if not licensing.has_admin_access():
+        raise SystemExit(
+            "No admin Supabase key found in this machine's keychain. Admin commands only "
+            "work where the project owner originally stored the Supabase secret key."
+        )
+
+    if args.admin_cmd == "issue-key":
+        key = licensing.admin_issue_key(note=args.note)
+        print(f"Issued Pro key: {key}")
+        if args.note:
+            print(f"Note: {args.note}")
+        print("Share this with the supporter -- it activates once via /activate and is then discarded.")
+    elif args.admin_cmd == "revoke-key":
+        ok = licensing.admin_revoke_key(args.key)
+        print(f"Revoked: {args.key}" if ok else f"Key not found: {args.key}")
+    elif args.admin_cmd == "list-keys":
+        rows = licensing.admin_list_keys()
+        if not rows:
+            print("No keys issued yet.")
+            return
+        for row in rows:
+            note = f"  ({row['note']})" if row.get("note") else ""
+            print(f"  {row['status']:>9}  {row['key']}{note}")
+
+
 def run_remote_info(port: int = 8000) -> None:
     import socket
 
@@ -1257,6 +1293,8 @@ def main() -> None:
         )
     elif args.cmd == "remote":
         run_remote_info(port=args.port)
+    elif args.cmd == "admin":
+        _run_admin_command(args)
 
 
 if __name__ == "__main__":

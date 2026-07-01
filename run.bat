@@ -3,6 +3,7 @@ setlocal enabledelayedexpansion
 
 set REPO_ROOT=%~dp0
 if "%REPO_ROOT:~-1%"=="\" set REPO_ROOT=%REPO_ROOT:~0,-1%
+set VENV_DIR=%REPO_ROOT%\.venv
 set PYTHONPATH=%REPO_ROOT%;%PYTHONPATH%
 
 :: 1. Find the best Python executable (check 'py' first, then fall back to 'python')
@@ -31,9 +32,9 @@ if "!PYTHON_EXE!" == "" (
 )
 
 :: 2. Create virtual environment if it does not exist
-if not exist "%REPO_ROOT%.venv" (
-    echo Creating Python virtual environment in .venv using !PYTHON_EXE!...
-    !PYTHON_EXE! -m venv "%REPO_ROOT%.venv"
+if not exist "%VENV_DIR%" (
+    echo Creating Python virtual environment in %VENV_DIR% using !PYTHON_EXE!...
+    !PYTHON_EXE! -m venv "%VENV_DIR%"
     if !errorlevel! neq 0 (
         echo =========================================================================
         echo ❌ ERROR: Failed to create Python virtual environment.
@@ -46,17 +47,17 @@ if not exist "%REPO_ROOT%.venv" (
 :: 3. Check if we need to install/update dependencies
 set INSTALL_DEPS=0
 set NEED_CUDA_UPGRADE=0
-if not exist "%REPO_ROOT%.venv\.dependencies_installed" set INSTALL_DEPS=1
+if not exist "%VENV_DIR%\.dependencies_installed" set INSTALL_DEPS=1
 
-if exist "%REPO_ROOT%.venv\Scripts\python.exe" (
-    "%REPO_ROOT%.venv\Scripts\python" -c "import torch" >nul 2>nul
+if exist "%VENV_DIR%\Scripts\python.exe" (
+    "%VENV_DIR%\Scripts\python" -c "import torch" >nul 2>nul
     if !errorlevel! neq 0 (
         echo Torch not found or import failed, triggering dependency installation...
         set INSTALL_DEPS=1
     ) else (
         where nvidia-smi >nul 2>nul
         if !errorlevel! equ 0 (
-            "%REPO_ROOT%.venv\Scripts\python" -c "import torch; assert torch.cuda.is_available()" >nul 2>nul
+            "%VENV_DIR%\Scripts\python" -c "import torch; assert torch.cuda.is_available()" >nul 2>nul
             if !errorlevel! neq 0 (
                 echo ⚠️ NVIDIA GPU detected but PyTorch is currently CPU-only.
                 set INSTALL_DEPS=1
@@ -66,25 +67,29 @@ if exist "%REPO_ROOT%.venv\Scripts\python.exe" (
     )
 ) else (
     echo ❌ ERROR: Virtual environment exists but is missing python.exe.
-    rmdir /s /q .venv
+    rmdir /s /q "%VENV_DIR%"
     pause
     exit /b 1
 )
 
 if !INSTALL_DEPS! equ 1 (
     echo Installing/updating dependencies...
-    "%REPO_ROOT%.venv\Scripts\python" -m pip install --upgrade pip
+    "%VENV_DIR%\Scripts\python" -m pip install --upgrade pip
     if !NEED_CUDA_UPGRADE! equ 1 (
-        "%REPO_ROOT%.venv\Scripts\pip" uninstall -y torch
+        "%VENV_DIR%\Scripts\pip" uninstall -y torch
     )
     where nvidia-smi >nul 2>nul
     if !errorlevel! equ 0 (
         echo 🟢 NVIDIA GPU detected. Installing PyTorch with CUDA 12.1 support...
-        "%REPO_ROOT%.venv\Scripts\pip" install "torch>=2.4.0" --index-url https://download.pytorch.org/whl/cu121
+        "%VENV_DIR%\Scripts\pip" install "torch>=2.4.0" --index-url https://download.pytorch.org/whl/cu121
+        if !errorlevel! neq 0 (
+            echo ⚠️ CUDA PyTorch install failed; attempting CPU PyTorch fallback...
+            "%VENV_DIR%\Scripts\pip" install "torch>=2.4.0" --index-url https://download.pytorch.org/whl/cpu
+        )
     )
-    "%REPO_ROOT%.venv\Scripts\pip" install -r "%REPO_ROOT%requirements.txt"
+    "%VENV_DIR%\Scripts\pip" install -r "%REPO_ROOT%\requirements.txt"
     if !errorlevel! equ 0 (
-        echo. > "%REPO_ROOT%.venv\.dependencies_installed"
+        echo. > "%VENV_DIR%\.dependencies_installed"
     ) else (
         echo ❌ ERROR: Failed to install project requirements.
         pause
@@ -99,7 +104,7 @@ echo =========================================================================
 echo   Geocentric Launcher
 echo =========================================================================
 echo   [1] GUI  — Start server and open the web app (default)
-echo   [2] CLI  — Start server and open terminal chat (local models)
+echo   [2] CLI  — Geocentric Code terminal agent (local models, no server needed)
 echo   [3] Connect — Terminal CLI to a remote Geocentric host
 echo =========================================================================
 set /p LAUNCH_MODE="Choose mode [1]: "
@@ -113,12 +118,9 @@ goto launch_gui
 
 :launch_cli
 echo =========================================================================
-echo 🖥️  Starting server, then opening Geocentric CLI...
-echo     Remote clients: run.bat -^> Connect -^> http://YOUR-LAN-IP:!GEOCENTRIC_PORT!
+echo Opening Geocentric CLI (local, in-process — no server needed)...
 echo =========================================================================
-start "Geocentric Server" /min "%REPO_ROOT%.venv\Scripts\python" -m geocentric.cli serve --non-interactive --host !GEOCENTRIC_HOST! --port !GEOCENTRIC_PORT!
-timeout /t 3 /nobreak >nul
-"%REPO_ROOT%.venv\Scripts\python" -m geocentric.cli interactive --server http://127.0.0.1:!GEOCENTRIC_PORT!
+"%VENV_DIR%\Scripts\python" -m geocentric.cli interactive
 goto end
 
 :launch_connect
@@ -127,7 +129,7 @@ if "!REMOTE_SERVER!"=="" set REMOTE_SERVER=http://127.0.0.1:!GEOCENTRIC_PORT!
 echo =========================================================================
 echo 🔗 Connecting CLI to !REMOTE_SERVER!
 echo =========================================================================
-"%REPO_ROOT%.venv\Scripts\python" -m geocentric.cli connect --server "!REMOTE_SERVER!"
+"%VENV_DIR%\Scripts\python" -m geocentric.cli connect --server "!REMOTE_SERVER!"
 goto end
 
 :launch_gui
@@ -135,7 +137,7 @@ echo =========================================================================
 echo 🚀 Starting Geocentric GUI on http://localhost:!GEOCENTRIC_PORT!
 echo     Remote CLI clients: run.bat -^> Connect -^> http://YOUR-LAN-IP:!GEOCENTRIC_PORT!
 echo =========================================================================
-"%REPO_ROOT%.venv\Scripts\python" -m geocentric.cli serve --non-interactive --host !GEOCENTRIC_HOST! --port !GEOCENTRIC_PORT!
+"%VENV_DIR%\Scripts\python" -m geocentric.cli serve --non-interactive --host !GEOCENTRIC_HOST! --port !GEOCENTRIC_PORT!
 goto end
 
 :end
