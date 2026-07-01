@@ -83,6 +83,8 @@ In the app:
 
 The optional closed-source deployment backend is documented in [CLOUD_SERVER.md](/Users/elywright/geocentric/CLOUD_SERVER.md). Its source folder is created outside this repo at `~/Geocentric Cloud Server/server_backend` so this upstream project stays intact.
 
+For Supabase server SDK setup, environment variables, and a starter Edge Function handler, see [SUPABASE_SETUP.md](SUPABASE_SETUP.md).
+
 ---
 
 ## 🌐 Heterogeneous Collaborative Training (Mac + Linux)

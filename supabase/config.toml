@@ -1,0 +1,2 @@
+[functions.my-handler]
+verify_jwt = false

@@ -1,0 +1,11 @@
+{
+  "name": "geocentric-supabase-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "supabase:install": "npm install @supabase/server"
+  },
+  "dependencies": {
+    "@supabase/server": "latest"
+  }
+}
